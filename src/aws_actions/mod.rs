@@ -1,12 +1,11 @@
-use std::collections::HashMap;
-
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use hyper::{
     header::{InvalidHeaderValue, ToStrError},
     http::{HeaderName, HeaderValue},
     Request,
 };
 use ring::digest;
+use std::collections::HashMap;
 
 use thiserror::Error;
 
@@ -35,10 +34,7 @@ fn convert_header(
 }
 
 fn canonize_request<T: AsRef<[u8]>>(req: &Request<T>) -> Result<String, AwsActionsError> {
-    let query = match req.uri().query() {
-        Some(q) => q,
-        None => "",
-    };
+    let query = req.uri().query().unwrap_or("");
 
     if !req.headers().contains_key("Host") {
         Err(AwsActionsError::MissingHeader(String::from("Host")))?
@@ -48,7 +44,7 @@ fn canonize_request<T: AsRef<[u8]>>(req: &Request<T>) -> Result<String, AwsActio
         Err(AwsActionsError::MissingHeader(String::from("x-amz-date")))?
     }
 
-    let mut headers: HashMap<String, String> = req
+    let headers: HashMap<String, String> = req
         .headers()
         .iter()
         .filter_map(|(header_name, header_value)| {
@@ -75,7 +71,7 @@ fn canonize_request<T: AsRef<[u8]>>(req: &Request<T>) -> Result<String, AwsActio
             .map(|k| {
                 let v = headers
                     .get(k)
-                    .ok_or(AwsActionsError::MissingHeader(k.to_owned()))?;
+                    .ok_or_else(|| AwsActionsError::MissingHeader(k.to_owned()))?;
                 Ok(format!("{}:{}", k, v))
             })
             .collect::<Result<Vec<String>, AwsActionsError>>()?
@@ -90,7 +86,7 @@ fn fix_request<T>(req: &mut Request<T>, timestamp: &DateTime<Utc>) -> Result<(),
     let host = req
         .uri()
         .host()
-        .ok_or(AwsActionsError::MissingHeader("host".to_string()))?
+        .ok_or_else(|| AwsActionsError::MissingHeader("host".to_string()))?
         .to_owned();
     let headers = req.headers_mut();
 
@@ -118,6 +114,7 @@ pub fn sign_request<T: AsRef<[u8]>>(req: &mut Request<T>) -> Result<(), AwsActio
 #[cfg(test)]
 mod test {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn test_digest_hex() {
