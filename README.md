@@ -1,17 +1,5 @@
-# template-rust
-template for Rust projects
-
-## Usage
-
-To use this template for libraries, run the following command:
-```bash
-cargo init --lib
-```
-
-To use this template for binaries, run the following command:
-```bash
-cargo init
-```
+# aws-glacier-tool
+Tool for archiving and retrieving files using AWS glacier
 
 ## License
 
