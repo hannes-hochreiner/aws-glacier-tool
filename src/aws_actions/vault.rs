@@ -2,7 +2,7 @@ use super::{AwsActionsError, Config};
 use chrono::{DateTime, Utc};
 use hyper::{body::HttpBody, Method, StatusCode};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -35,7 +35,7 @@ pub async fn list_vaults(config: &Config) -> Result<Vec<AwsVault>, AwsActionsErr
         false,
     )?;
 
-    let mut resp = req.await?;
+    let mut resp = tokio::time::timeout(Duration::from_secs(1), req).await??;
 
     if resp.status() != StatusCode::OK {
         return Err(AwsActionsError::StatusCodeError(resp.status()));
