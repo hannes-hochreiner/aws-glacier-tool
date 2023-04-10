@@ -1,18 +1,21 @@
 use chrono::{DateTime, Utc};
 use hyper::{
+    body::HttpBody,
     client::ResponseFuture,
-    header::{InvalidHeaderName, InvalidHeaderValue},
+    header::{InvalidHeaderName, InvalidHeaderValue, ToStrError},
     http::{HeaderName, HeaderValue},
-    Body, Client, Method, Request, StatusCode,
+    Body, Client, Method, Request, Response, StatusCode,
 };
 use hyper_tls::HttpsConnector;
 use ring::{digest, hmac};
-use std::{collections::HashMap, convert::Infallible};
+use std::{collections::HashMap, convert::Infallible, string::FromUtf8Error};
 use thiserror::Error;
+use tokio::{task::JoinError, time::error::Elapsed};
 
+pub mod archive;
 pub mod vault;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub region: String,
     pub secret_key: String,
@@ -35,10 +38,32 @@ pub enum AwsActionsError {
     Infallible(#[from] Infallible),
     #[error("io error")]
     IoError(#[from] std::io::Error),
-    #[error("unexpected status code: {0}")]
-    StatusCodeError(StatusCode),
+    #[error("unexpected status code: {obtained} (expected: {expected}): {description}")]
+    StatusCodeError {
+        expected: StatusCode,
+        obtained: StatusCode,
+        description: String,
+    },
     #[error("serde json error")]
     SerdeJsonError(#[from] serde_json::Error),
+    #[error("timeout")]
+    ElapsedError(#[from] Elapsed),
+    #[error("file too large")]
+    FileTooLarge,
+    #[error("header \"{0}\" not found")]
+    HeaderNotFound(String),
+    #[error("could not convert header to string")]
+    HeaderConversionError(#[from] ToStrError),
+    #[error("join error")]
+    JoinError(#[from] JoinError),
+    #[error("maximum number of retries reached")]
+    MaxRetry,
+    #[error("checksum error")]
+    CheckSumError,
+    #[error("error converting string")]
+    Utf8Error(#[from] FromUtf8Error),
+    #[error("string \"{string}\" contains char \"{char}\", which is not in the allowed range (i.e, 32-126)")]
+    CharError { string: String, char: char },
 }
 
 fn request(
@@ -153,7 +178,20 @@ fn build_request(
             req_headers.insert(k.to_owned(), v.to_owned());
         });
 
-    Ok(req_builder.body(Body::try_from(data)?)?)
+    let req = req_builder.body(Body::try_from(data)?)?;
+
+    log::debug!("{:?}", req.headers());
+
+    Ok(req)
+}
+
+fn get_header_value(resp: &Response<Body>, header_name: &str) -> Result<String, AwsActionsError> {
+    Ok(resp
+        .headers()
+        .get(header_name)
+        .ok_or_else(|| AwsActionsError::HeaderNotFound(header_name.to_string()))?
+        .to_str()?
+        .to_string())
 }
 
 fn hash_hex(data: impl AsRef<[u8]>) -> String {
@@ -243,6 +281,28 @@ fn create_signature(
         )
         .as_ref(),
     ))
+}
+
+async fn check_response(
+    resp: &mut Response<Body>,
+    expected: StatusCode,
+) -> Result<(), AwsActionsError> {
+    match resp.status() == expected {
+        true => Ok(()),
+        false => {
+            let mut buffer = Vec::new();
+
+            while let Some(chunk) = resp.body_mut().data().await {
+                buffer.append(&mut chunk?.to_vec());
+            }
+
+            Err(AwsActionsError::StatusCodeError {
+                expected,
+                obtained: resp.status(),
+                description: String::from_utf8(buffer)?,
+            })
+        }
+    }
 }
 
 #[cfg(test)]

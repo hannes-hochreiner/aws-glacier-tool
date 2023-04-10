@@ -1,4 +1,4 @@
-use super::{AwsActionsError, Config};
+use super::{check_response, AwsActionsError, Config};
 use chrono::{DateTime, Utc};
 use hyper::{body::HttpBody, Method, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -37,9 +37,7 @@ pub async fn list_vaults(config: &Config) -> Result<Vec<AwsVault>, AwsActionsErr
 
     let mut resp = tokio::time::timeout(Duration::from_secs(1), req).await??;
 
-    if resp.status() != StatusCode::OK {
-        return Err(AwsActionsError::StatusCodeError(resp.status()));
-    }
+    check_response(&mut resp, StatusCode::OK).await?;
 
     let mut buffer = Vec::new();
 

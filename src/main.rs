@@ -1,4 +1,4 @@
-use aws_glacier_tool::aws_actions::{vault, AwsActionsError, Config};
+use aws_glacier_tool::aws_actions::{archive, vault, AwsActionsError, Config};
 use clap::{Parser, Subcommand};
 
 /// Tool to archive and retrieve files using AWS glacier
@@ -25,13 +25,19 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Name of the file to archive
-    Archive { filename: String },
+    Archive {
+        filename: String,
+        vault: String,
+        description: Option<String>,
+    },
     /// List all vaults
     ListVaults,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), AwsActionsError> {
+    env_logger::init();
+
     let args = Args::parse();
     let config = Config {
         region: args.aws_region,
@@ -45,8 +51,16 @@ async fn main() -> Result<(), AwsActionsError> {
 
             println!("{}", serde_json::to_string(&vault_list)?)
         }
-        Commands::Archive { filename: _ } => {
-            todo!()
+        Commands::Archive {
+            filename,
+            vault,
+            description,
+        } => {
+            let description = description.unwrap_or_default();
+            let archive_upload_information =
+                archive::upload_file(&config, &filename, &vault, &description).await?;
+
+            println!("{}", serde_json::to_string(&archive_upload_information)?);
         }
     };
 
